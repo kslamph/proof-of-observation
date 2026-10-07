@@ -41,6 +41,7 @@ jobs:
           sudo install -m 0755 "$(find /tmp/nitro-cli/build -name nitro-cli -type f | head -1)" /usr/bin/nitro-cli
           sudo mkdir -p /usr/share/nitro_enclaves/blobs
           sudo cp -r /tmp/nitro-cli/blobs/aarch64/* /usr/share/nitro_enclaves/blobs/
+          sudo mkdir -p /var/log/nitro_enclaves
           nitro-cli --version || true
 
       - name: Double reproducible build (enclave/)
