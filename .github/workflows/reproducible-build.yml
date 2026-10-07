@@ -54,7 +54,7 @@ jobs:
           OUT="$RUNNER_TEMP/repro"
           PA=$(grep -oE '[0-9a-f]{96}' "$OUT/v6a.enclave.log" | head -1 || true)
           PB=$(grep -oE '[0-9a-f]{96}' "$OUT/v6b.enclave.log" | head -1 || true)
-          CANON=$(grep -A2 '^## 规范 PCR0' docs/tee-reproducible-build.md | grep -oE '[0-9a-f]{96}' | head -1)
+          CANON=$(grep -oE '[0-9a-f]{96}' docs/tee-reproducible-build.md | head -1 || true)
           echo "PCR0_A     = $PA"
           echo "PCR0_B     = $PB"
           echo "CANONICAL  = $CANON"
