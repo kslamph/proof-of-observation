@@ -1,0 +1,82 @@
+name: reproducible-build
+
+on:
+  workflow_dispatch:
+    inputs:
+      nitro_cli_version:
+        description: 'aws-nitro-enclaves-cli tag'
+        required: true
+        default: 'v1.4.5'
+  push:
+    branches: [main]
+    paths:
+      - 'enclave/**'
+      - '.github/workflows/reproducible-build.yml'
+
+# 在 arm64 上双构 enclave,验证 PCR0 可复现性。第三方复算的权威路径:
+# 你的 PCR0 == docs/tee-reproducible-build.md 的规范值 == 运行中 attestation。
+jobs:
+  pcr0:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Environment
+        run: |
+          uname -a
+          docker --version
+          df -h / | tail -1
+
+      - name: Build nitro-cli (source, tools container)
+        run: |
+          git clone --depth 1 --branch ${{ inputs.nitro_cli_version || 'v1.4.5' }} \
+            https://github.com/aws/aws-nitro-enclaves-cli.git /tmp/nitro-cli
+          cd /tmp/nitro-cli
+          make nitro-cli
+          find /tmp/nitro-cli/build -name nitro-cli -type f
+
+      - name: Install nitro-cli + blobs
+        run: |
+          sudo install -m 0755 "$(find /tmp/nitro-cli/build -name nitro-cli -type f | head -1)" /usr/bin/nitro-cli
+          sudo mkdir -p /usr/share/nitro_enclaves/blobs
+          sudo cp -r /tmp/nitro-cli/blobs/aarch64/* /usr/share/nitro_enclaves/blobs/
+          nitro-cli --version || true
+
+      - name: Double reproducible build (enclave/)
+        working-directory: enclave
+        run: bash reproducible-build.sh "$RUNNER_TEMP/repro"
+
+      - name: Compare against canonical PCR0
+        run: |
+          set -euo pipefail
+          OUT="$RUNNER_TEMP/repro"
+          PA=$(grep -oE '[0-9a-f]{96}' "$OUT/v6a.enclave.log" | head -1 || true)
+          PB=$(grep -oE '[0-9a-f]{96}' "$OUT/v6b.enclave.log" | head -1 || true)
+          CANON=$(grep -A2 '^## 规范 PCR0' docs/tee-reproducible-build.md | grep -oE '[0-9a-f]{96}' | head -1)
+          echo "PCR0_A     = $PA"
+          echo "PCR0_B     = $PB"
+          echo "CANONICAL  = $CANON"
+          {
+            echo "## PCR0 reproducibility"
+            echo ""
+            echo "- PCR0_A: \`$PA\`"
+            echo "- PCR0_B: \`$PB\`"
+            echo "- canonical (docs): \`$CANON\`"
+            echo ""
+            if [ "$PA" = "$PB" ]; then echo "- ✅ two no-cache builds agree"; else echo "- ❌ builds disagree"; fi
+            if [ -n "$CANON" ] && [ "$PA" = "$CANON" ]; then
+              echo "- ✅ PCR0_A == canonical"
+            elif [ -n "$CANON" ]; then
+              echo "- ⚠️ PCR0_A != canonical (source/toolchain drift?)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          test "$PA" = "$PB"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-build
+          path: ${{ runner.temp }}/repro
+          retention-days: 7
